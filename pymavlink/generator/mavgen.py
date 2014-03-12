@@ -25,46 +25,17 @@ except Exception:
 schemaFile = os.path.join(os.path.dirname(os.path.realpath(__file__)), "mavschema.xsd")
 
 
-def mavgen(opts, args) :
+def mavgen(opts, args):
     """Generate mavlink message formatters and parsers (C and Python ) using options
     and args where args are a list of xml files. This function allows python
     scripts under Windows to control mavgen using the same interface as
     shell scripts under Unix"""
 
     xml = []
-
+    
     for fname in args:
-        if performValidation:
-            print("Validating %s" % fname)
-            mavgen_validate(fname, schemaFile, opts.error_limit);
-        else:
-            print("Validation skipped for %s." % fname)
+        mavgen_validate_parse_recursive(fname, schemaFile, opts.error_limit, opts.wire_protocol, xml)
 
-        print("Parsing %s" % fname)
-        xml.append(mavparse.MAVXML(fname, opts.wire_protocol))
-
-    # expand includes
-    for x in xml[:]:
-        for i in x.include:
-            fname = os.path.join(os.path.dirname(x.filename), i)
-
-            ## Validate XML file with XSD file if possible.
-            if performValidation:
-                print("Validating %s" % fname)
-                mavgen_validate(fname, schemaFile, opts.error_limit);
-            else:
-                print("Validation skipped for %s." % fname)
-
-            ## Parsing
-            print("Parsing %s" % fname)
-            xml.append(mavparse.MAVXML(fname, opts.wire_protocol))
-
-            # include message lengths and CRCs too
-            for idx in range(0, 256):
-                if x.message_lengths[idx] == 0:
-                    x.message_lengths[idx] = xml[-1].message_lengths[idx]
-                    x.message_crcs[idx] = xml[-1].message_crcs[idx]
-                    x.message_names[idx] = xml[-1].message_names[idx]
 
     # work out max payload size across all includes
     largest_payload = 0
@@ -149,6 +120,39 @@ def mavgen_validate(fname, schema, errorLimitNumber) :
     # domTree is a minidom document object
     domTree = domTreeWrapper.getTree()
 
+def mavgen_validate_parse_recursive(fname, schemaFile, error_limit, wire_protocol, xml):
+    """Recursively validates and parses fname the included files"""
+    
+    # First check that for loops, don't parse the same message set twice
+    for x in xml:
+        if x.filename == fname:
+            print("Found loop in includes")
+            return
+    
+    if performValidation:
+        print("Validating %s" % fname)
+        mavgen_validate(fname, schemaFile, error_limit);
+    else:
+        print("Validation skipped for %s." % fname)
+
+    print("Parsing %s" % fname)
+    x = mavparse.MAVXML(fname, wire_protocol)
+    
+    # include message lengths and CRCs too
+    if len(xml) > 0:
+        print("including lengths and CRC")
+        for idx in range(0, 256):
+            if x.message_lengths[idx] == 0:
+                x.message_lengths[idx] = xml[-1].message_lengths[idx]
+                x.message_crcs[idx] = xml[-1].message_crcs[idx]
+                x.message_names[idx] = xml[-1].message_names[idx]
+            
+    xml.append(x)
+    
+    # validate and parse includes
+    for i in x.include:
+        fname = os.path.join(os.path.dirname(x.filename), i)
+        mavgen_validate_parse_recursive(fname, schemaFile, opts.error_limit, opts.wire_protocol, xml)
 
 if __name__ == "__main__":
     from optparse import OptionParser
