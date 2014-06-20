@@ -118,7 +118,9 @@ class DFReader(object):
         self.px4_timestamps = False
         self.px4_timebase = 0
         self.timestamp = 0
+        self.mav_type = mavutil.mavlink.MAV_TYPE_FIXED_WING
         self.verbose = False
+        self.params = {}
         
     def _rewind(self):
         '''reset counters on rewind'''
@@ -249,13 +251,31 @@ class DFReader(object):
             self.px4_timestamps = True
         if type == 'GPS':
             self._adjust_time_base(m)
+        if type == 'MSG':
+            if m.Message.startswith("ArduRover"):
+                self.mav_type = mavutil.mavlink.MAV_TYPE_GROUND_ROVER
+            elif m.Message.startswith("ArduPlane"):
+                self.mav_type = mavutil.mavlink.MAV_TYPE_FIXED_WING
+            elif m.Message.startswith("ArduCopter"):
+                self.mav_type = mavutil.mavlink.MAV_TYPE_QUADROTOR
+            elif m.Message.startswith("Antenna"):
+                self.mav_type = mavutil.mavlink.MAV_TYPE_ANTENNA_TRACKER
         if type == 'MODE':
             if isinstance(m.Mode, str):
                 self.flightmode = m.Mode.upper()
             elif 'ModeNum' in m._fieldnames:
-                self.flightmode = mavutil.mode_string_apm(m.ModeNum)
+                mapping = mavutil.mode_mapping_bynumber(self.mav_type)
+                if mapping is not None and m.ModeNum in mapping:
+                    self.flightmode = mapping[m.ModeNum]
             else:
                 self.flightmode = mavutil.mode_string_acm(m.Mode)
+        if type == 'STAT':
+            if 'MainState' in m._fieldnames:
+                self.flightmode = mavutil.mode_string_px4(m.MainState)
+            else:
+                self.flightmode = "UNKNOWN"
+        if type == 'PARM' and getattr(m, 'Name', None) is not None:
+            self.params[m.Name] = m.Value
         self._set_time(m)
 
     def recv_match(self, condition=None, type=None, blocking=False):
@@ -276,6 +296,13 @@ class DFReader(object):
     def check_condition(self, condition):
         '''check if a condition is true'''
         return mavutil.evaluate_condition(condition, self.messages)
+
+    def param(self, name, default=None):
+        '''convenient function for returning an arbitrary MAVLink
+           parameter with a default'''
+        if not name in self.params:
+            return default
+        return self.params[name]
 
 class DFReader_binary(DFReader):
     '''parse a binary dataflash file'''
@@ -308,8 +335,11 @@ class DFReader_binary(DFReader):
             
         hdr = self.data[self.offset:self.offset+3]
         skip_bytes = 0
+        skip_type = None
         # skip over bad messages
         while (ord(hdr[0]) != self.HEAD1 or ord(hdr[1]) != self.HEAD2 or ord(hdr[2]) not in self.formats):
+            if skip_type is None:
+                skip_type = (ord(hdr[0]), ord(hdr[1]), ord(hdr[2]))
             skip_bytes += 1
             self.offset += 1
             if len(self.data) - self.offset < 3:
@@ -317,7 +347,7 @@ class DFReader_binary(DFReader):
             hdr = self.data[self.offset:self.offset+3]
         msg_type = ord(hdr[2])
         if skip_bytes != 0:
-            print("Skipped %u bad bytes in log" % skip_bytes)
+            print("Skipped %u bad bytes in log %s" % (skip_bytes, skip_type))
 
         self.offset += 3
         self.remaining -= 3
@@ -443,4 +473,4 @@ if __name__ == "__main__":
         m = log.recv_msg()
         if m is None:
             break
-        print m
+        print(m)
