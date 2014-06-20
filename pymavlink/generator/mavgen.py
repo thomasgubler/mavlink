@@ -121,7 +121,7 @@ def mavgen_validate(fname, schema, errorLimitNumber) :
     domTree = domTreeWrapper.getTree()
 
 def mavgen_validate_parse_recursive(fname, schemaFile, error_limit, wire_protocol, xml):
-    """Recursively validates and parses fname the included files"""
+    """Recursively validates and parses fname and the included files"""
     
     # First check that for loops, don't parse the same message set twice
     for x in xml:
